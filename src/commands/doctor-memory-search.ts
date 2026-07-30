@@ -257,6 +257,7 @@ function isKeyOptionalMemoryProvider(providerId: string, cfg: OpenClawConfig): b
     providerId === "local" ||
     providerId === "ollama" ||
     providerId === "lmstudio" ||
+    providerId === "omlx" ||
     isOpenAICompatibleMemoryProvider(providerId, cfg)
   );
 }

@@ -2,7 +2,7 @@ import { isCloudModelRef } from "@openclaw/model-catalog-core/model-catalog-refs
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import type { OpenClawConfig } from "./types.openclaw.js";
 
-const AUTO_LOCAL_MODEL_LEAN_PROVIDER_IDS = new Set(["lmstudio", "ollama"]);
+const AUTO_LOCAL_MODEL_LEAN_PROVIDER_IDS = new Set(["lmstudio", "ollama", "omlx"]);
 
 /** Returns true only for local runtimes that onboarding can identify without model-name guesses. */
 function shouldAutoEnableLocalModelLean(providerId: string, modelRef: string): boolean {

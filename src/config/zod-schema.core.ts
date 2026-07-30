@@ -463,6 +463,7 @@ const BUILT_IN_MODEL_PROVIDER_OVERLAY_IDS = new Set([
   "novitaai",
   "ollama",
   "ollama-cloud",
+  "omlx",
   "openai",
   "opencode",
   "opencode-go",
