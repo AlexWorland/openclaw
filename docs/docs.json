@@ -1543,6 +1543,7 @@
                   "providers/nvidia",
                   "providers/ollama",
                   "providers/ollama-cloud",
+                  "providers/omlx",
                   "providers/openai",
                   "providers/opencode",
                   "providers/opencode-go",
