@@ -169,6 +169,7 @@ function humanizeId(value) {
     ["msteams", "Microsoft Teams"],
     ["nextcloud", "Nextcloud"],
     ["nvidia", "NVIDIA"],
+    ["omlx", "oMLX"],
     ["openai", "OpenAI"],
     ["opencode", "OpenCode"],
     ["openrouter", "OpenRouter"],

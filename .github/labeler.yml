@@ -681,6 +681,11 @@
   - changed-files:
       - any-glob-to-any-file:
           - "extensions/ollama/**"
+"extensions: omlx":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "extensions/omlx/**"
+          - "docs/providers/omlx.md"
 "extensions: opencode":
   - changed-files:
       - any-glob-to-any-file:
