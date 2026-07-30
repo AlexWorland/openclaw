@@ -288,6 +288,21 @@ export function mapOmlxWireEntry(entry: OmlxModelWire): OmlxModelBase | null {
 }
 
 /**
+ * Collects non-helper embedding model ids advertised by oMLX discovery.
+ * These are deliberately absent from the chat catalog; memory-search selects
+ * from this list instead.
+ */
+export function collectOmlxEmbeddingModelIds(models: readonly OmlxModelWire[]): string[] {
+  return models.flatMap((entry) => {
+    if (entry.is_helper === true || entry.model_type !== "embedding") {
+      return [];
+    }
+    const id = typeof entry.id === "string" ? entry.id.trim() : "";
+    return id ? [id] : [];
+  });
+}
+
+/**
  * Maps oMLX wire models to config entries using plain display names.
  * Use this for config persistence where runtime state tags are not needed.
  * For runtime discovery with enriched names, use discoverOmlxModels from models.fetch.ts.

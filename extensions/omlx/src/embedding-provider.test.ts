@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   createRemoteEmbeddingProvider: vi.fn(),
   ensureOmlxModelLoaded: vi.fn(),
+  resolveOmlxEmbeddingModel: vi.fn(),
   resolveOmlxProviderHeaders: vi.fn(),
   resolveOmlxRuntimeApiKey: vi.fn(),
 }));
@@ -17,6 +18,7 @@ vi.mock("openclaw/plugin-sdk/memory-core-host-engine-embeddings", async (importO
 vi.mock("./models.fetch.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ensureOmlxModelLoaded: mocks.ensureOmlxModelLoaded,
+  resolveOmlxEmbeddingModel: mocks.resolveOmlxEmbeddingModel,
 }));
 
 vi.mock("./runtime.js", async (importOriginal) => ({
@@ -50,6 +52,14 @@ describe("createOmlxEmbeddingProvider", () => {
     vi.clearAllMocks();
     mocks.createRemoteEmbeddingProvider.mockReturnValue(remoteProviderStub);
     mocks.ensureOmlxModelLoaded.mockResolvedValue(undefined);
+    // Echo the requested id back as "resolved" and unloaded, matching what a real
+    // server reports for a model that has never been used: exercises the same
+    // preload call the old unconditional-load code path always took.
+    mocks.resolveOmlxEmbeddingModel.mockImplementation(async (params: { requested?: string }) => ({
+      status: "resolved",
+      modelId: params.requested ?? "Qwen3-Embedding-0.6B-4bit-DWQ",
+      loaded: false,
+    }));
     mocks.resolveOmlxProviderHeaders.mockResolvedValue(undefined);
     mocks.resolveOmlxRuntimeApiKey.mockResolvedValue(undefined);
   });
@@ -76,6 +86,36 @@ describe("createOmlxEmbeddingProvider", () => {
     mocks.ensureOmlxModelLoaded.mockRejectedValue(new Error("oMLX unreachable"));
 
     await expect(createOmlxEmbeddingProvider(buildOptions())).resolves.toBeDefined();
+  });
+
+  it("skips the load call when the resolved model is already loaded", async () => {
+    mocks.resolveOmlxEmbeddingModel.mockResolvedValue({
+      status: "resolved",
+      modelId: "Qwen3-Embedding-0.6B-4bit-DWQ",
+      loaded: true,
+    });
+
+    await createOmlxEmbeddingProvider(buildOptions());
+
+    expect(mocks.ensureOmlxModelLoaded).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with the real alternatives when the requested model is absent", async () => {
+    mocks.resolveOmlxEmbeddingModel.mockResolvedValue({
+      status: "absent",
+      available: ["embed-a", "embed-b"],
+    });
+
+    await expect(createOmlxEmbeddingProvider(buildOptions())).rejects.toThrow(/embed-a, embed-b/);
+  });
+
+  it("falls back to the requested model when discovery is unavailable", async () => {
+    mocks.resolveOmlxEmbeddingModel.mockResolvedValue({ status: "unavailable" });
+
+    const { client } = await createOmlxEmbeddingProvider(buildOptions());
+
+    expect(client.model).toBe("Qwen3-Embedding-0.6B-4bit-DWQ");
+    expect(mocks.ensureOmlxModelLoaded).not.toHaveBeenCalled();
   });
 
   it("uses the configured provider base URL when set", async () => {

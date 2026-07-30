@@ -1,6 +1,7 @@
 // Omlx tests cover models behavior.
 import { describe, expect, it } from "vitest";
 import {
+  collectOmlxEmbeddingModelIds,
   buildOmlxModelName,
   mapOmlxWireEntry,
   mapOmlxWireModelsToConfig,
@@ -217,5 +218,30 @@ describe("mapOmlxWireModelsToConfig", () => {
     ]);
     expect(entries).toHaveLength(1);
     expect(entries[0]?.id).toBe("model-a");
+  });
+});
+
+describe("collectOmlxEmbeddingModelIds", () => {
+  it("returns only non-helper embedding models, preserving server order", () => {
+    expect(
+      collectOmlxEmbeddingModelIds([
+        { id: "chat", model_type: "llm" },
+        { id: "embed-b", model_type: "embedding" },
+        { id: "vision", model_type: "vlm" },
+        { id: "embed-a", model_type: "embedding" },
+        { id: "embed-helper", model_type: "embedding", is_helper: true },
+        { id: "tts", model_type: "audio_tts" },
+      ]),
+    ).toEqual(["embed-b", "embed-a"]);
+  });
+
+  it("skips entries with a blank or non-string id", () => {
+    expect(
+      collectOmlxEmbeddingModelIds([
+        { id: "   ", model_type: "embedding" },
+        { id: 42, model_type: "embedding" },
+        { model_type: "embedding" },
+      ]),
+    ).toEqual([]);
   });
 });

@@ -10,8 +10,12 @@ import {
 import { resolveMemorySecretInputString } from "openclaw/plugin-sdk/memory-core-host-secret";
 import { normalizeProviderId } from "openclaw/plugin-sdk/provider-model-shared";
 import { formatErrorMessage, type SsrFPolicy } from "openclaw/plugin-sdk/ssrf-runtime";
-import { OMLX_DEFAULT_EMBEDDING_MODEL, OMLX_PROVIDER_ID } from "./defaults.js";
-import { ensureOmlxModelLoaded } from "./models.fetch.js";
+import {
+  OMLX_DEFAULT_EMBEDDING_MODEL,
+  OMLX_LOAD_TIMEOUT_MS,
+  OMLX_PROVIDER_ID,
+} from "./defaults.js";
+import { ensureOmlxModelLoaded, resolveOmlxEmbeddingModel } from "./models.fetch.js";
 import { resolveOmlxInferenceBase, resolveOmlxServerBase } from "./models.js";
 import {
   buildOmlxAuthHeaders,
@@ -150,7 +154,11 @@ export async function createOmlxEmbeddingProvider(
         ? providerBaseUrl
         : undefined;
   const baseUrl = resolveOmlxInferenceBase(configuredBaseUrl);
-  const model = normalizeOmlxModel(options.model, resolvedProvider?.providerId);
+  // Distinguish "operator named a model" from "fall back to the default": only an
+  // explicit request may fail closed when the server does not serve it.
+  const requestedModel = options.model?.trim()
+    ? normalizeOmlxModel(options.model, resolvedProvider?.providerId)
+    : undefined;
   const providerHeaders = await resolveOmlxProviderHeaders({
     config: options.config,
     env: process.env,
@@ -173,12 +181,6 @@ export async function createOmlxEmbeddingProvider(
       headers: headerOverrides,
     }) ?? {};
   const ssrfPolicy = buildRemoteBaseUrlPolicy(baseUrl);
-  const client: OmlxEmbeddingClient = {
-    baseUrl,
-    model,
-    headers,
-    ssrfPolicy,
-  };
   const localServiceTarget =
     providerConfig?.localService && !baseUrlSource
       ? {
@@ -203,24 +205,63 @@ export async function createOmlxEmbeddingProvider(
     }
   };
 
-  await withLocalServiceLease(undefined, async () => {
-    try {
-      await ensureOmlxModelLoaded({
-        baseUrl,
-        apiKey,
-        headers: headerOverrides,
-        ssrfPolicy,
-        modelId: model,
-        timeoutMs: 120_000,
-      });
-    } catch (error) {
-      log.warn("oMLX embeddings warmup failed; continuing without preload", {
-        baseUrl,
-        model,
-        error: formatErrorMessage(error),
-      });
+  // Resolve inside the lease so a managed local service is running before we ask
+  // it what it serves; the resolution doubles as the load-state probe.
+  const model = await withLocalServiceLease(undefined, async () => {
+    const resolution = await resolveOmlxEmbeddingModel({
+      baseUrl,
+      apiKey,
+      headers: headerOverrides,
+      ssrfPolicy,
+      requested: requestedModel,
+      preferred: DEFAULT_OMLX_EMBEDDING_MODEL,
+    });
+    if (resolution.status === "absent") {
+      const available = resolution.available;
+      throw new Error(
+        `oMLX does not serve embedding model "${requestedModel ?? DEFAULT_OMLX_EMBEDDING_MODEL}" at ${baseUrl}. ` +
+          (available.length > 0
+            ? `Set memorySearch.embeddingModel to one of: ${available.join(", ")}.`
+            : "Install an embedding model in oMLX, then retry."),
+      );
     }
+    if (resolution.status === "unavailable") {
+      // Keep memory search working through a transient outage rather than failing
+      // the whole engine; the embed call itself will surface a live error.
+      const fallbackModel = requestedModel ?? DEFAULT_OMLX_EMBEDDING_MODEL;
+      log.warn("oMLX embedding discovery unavailable; using configured model", {
+        baseUrl,
+        model: fallbackModel,
+      });
+      return fallbackModel;
+    }
+    if (!resolution.loaded) {
+      try {
+        await ensureOmlxModelLoaded({
+          baseUrl,
+          apiKey,
+          headers: headerOverrides,
+          ssrfPolicy,
+          modelId: resolution.modelId,
+          timeoutMs: OMLX_LOAD_TIMEOUT_MS,
+        });
+      } catch (error) {
+        log.warn("oMLX embeddings warmup failed; continuing without preload", {
+          baseUrl,
+          model: resolution.modelId,
+          error: formatErrorMessage(error),
+        });
+      }
+    }
+    return resolution.modelId;
   });
+
+  const client: OmlxEmbeddingClient = {
+    baseUrl,
+    model,
+    headers,
+    ssrfPolicy,
+  };
 
   const remoteProvider = createRemoteEmbeddingProvider({
     id: OMLX_PROVIDER_ID,

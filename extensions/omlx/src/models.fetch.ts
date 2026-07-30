@@ -16,6 +16,7 @@ import {
 import { OMLX_DISCOVERY_TIMEOUT_MS, OMLX_LOAD_TIMEOUT_MS } from "./defaults.js";
 import {
   buildOmlxModelName,
+  collectOmlxEmbeddingModelIds,
   mapOmlxWireEntry,
   normalizeOmlxModelId,
   resolveOmlxServerBase,
@@ -182,6 +183,62 @@ export async function discoverOmlxModels(
       };
     })
     .filter((entry): entry is ModelDefinitionConfig => entry !== null);
+}
+
+/**
+ * Resolves which embedding model to use from live discovery.
+ *
+ * `unavailable` keeps a temporarily unreachable server from hard-failing memory
+ * search: the caller falls back to its configured/default id. `absent` means the
+ * server answered and genuinely does not serve the requested model, so the
+ * caller can name the real alternatives instead of failing opaquely.
+ */
+export async function resolveOmlxEmbeddingModel(params: {
+  baseUrl?: string;
+  apiKey?: string;
+  headers?: Record<string, string>;
+  ssrfPolicy?: SsrFPolicy;
+  /** Explicitly configured embedding model id, if any. */
+  requested?: string;
+  /** Bundled default preferred when the server advertises it. */
+  preferred?: string;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}): Promise<
+  | { status: "resolved"; modelId: string; loaded: boolean }
+  | { status: "absent"; available: string[] }
+  | { status: "unavailable" }
+> {
+  const discovery = await fetchOmlxModels({
+    baseUrl: params.baseUrl,
+    apiKey: params.apiKey,
+    headers: params.headers,
+    ssrfPolicy: params.ssrfPolicy,
+    timeoutMs: params.timeoutMs,
+    fetchImpl: params.fetchImpl,
+  });
+  if (!discovery.reachable || (discovery.status !== undefined && discovery.status >= 400)) {
+    return { status: "unavailable" };
+  }
+  const available = collectOmlxEmbeddingModelIds(discovery.models);
+  const isLoaded = (modelId: string) =>
+    discovery.models.find((entry) => entry.id === modelId)?.loaded === true;
+
+  const requested = normalizeOmlxModelId(params.requested ?? "");
+  if (requested) {
+    // Accept any advertised id, not just `model_type: "embedding"`: operators may
+    // point memory search at a model oMLX classifies differently.
+    const advertised = discovery.models.some((entry) => entry.id === requested);
+    return advertised
+      ? { status: "resolved", modelId: requested, loaded: isLoaded(requested) }
+      : { status: "absent", available };
+  }
+  const preferred = normalizeOmlxModelId(params.preferred ?? "");
+  const selected = preferred && available.includes(preferred) ? preferred : available[0];
+  if (!selected) {
+    return { status: "absent", available };
+  }
+  return { status: "resolved", modelId: selected, loaded: isLoaded(selected) };
 }
 
 /** Ensures a model is loaded in oMLX before first real inference/embedding call. */

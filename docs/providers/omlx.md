@@ -134,7 +134,19 @@ Configure explicitly when oMLX runs on a different host or port, you want to pin
 
 ## Embeddings
 
-oMLX is also a memory-search embedding provider. Discovered `model_type: "embedding"` models are loaded before the first embedding request, the same way chat models are:
+oMLX is also a memory-search embedding provider. Embedding models are deliberately absent from the chat catalog, so memory search detects them separately: OpenClaw reads `model_type: "embedding"` entries from the same `/v1/models/status` response and loads the selected one before the first embedding request.
+
+Naming a model is optional. Leave `embeddingModel` unset and OpenClaw picks one from live discovery, preferring `Qwen3-Embedding-0.6B-4bit-DWQ` when your server has it:
+
+```json5
+{
+  memorySearch: {
+    embeddingProvider: "omlx",
+  },
+}
+```
+
+Set it explicitly to pin a specific model:
 
 ```json5
 {
@@ -144,6 +156,12 @@ oMLX is also a memory-search embedding provider. Discovered `model_type: "embedd
   },
 }
 ```
+
+If the model you name is not one your server serves, startup fails with the ids that _are_ available rather than a generic request error. A model oMLX classifies as something other than `embedding` is still accepted when you name it explicitly, so you can point memory search at any advertised model.
+
+<Note>
+An unreachable oMLX server is treated differently from a missing model: OpenClaw keeps the configured (or default) embedding model, logs a warning, and lets the embedding call surface the live error. Only a server that answers and does not serve the model is a configuration error.
+</Note>
 
 ## Prompt caching
 

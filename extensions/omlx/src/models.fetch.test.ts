@@ -10,7 +10,12 @@ vi.mock("openclaw/plugin-sdk/ssrf-runtime", async (importOriginal) => ({
   fetchWithSsrFGuard: mocks.fetchWithSsrFGuard,
 }));
 
-import { discoverOmlxModels, ensureOmlxModelLoaded, fetchOmlxModels } from "./models.fetch.js";
+import {
+  discoverOmlxModels,
+  ensureOmlxModelLoaded,
+  fetchOmlxModels,
+  resolveOmlxEmbeddingModel,
+} from "./models.fetch.js";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -222,5 +227,100 @@ describe("ensureOmlxModelLoaded", () => {
     await expect(
       ensureOmlxModelLoaded({ baseUrl: "http://localhost:8000", modelId: "   " }),
     ).rejects.toThrow(/model id is required/);
+  });
+});
+
+describe("resolveOmlxEmbeddingModel", () => {
+  const EMBEDDING_CATALOG = [
+    { id: "chat-model", model_type: "llm" },
+    { id: "embed-a", model_type: "embedding", loaded: true },
+    { id: "embed-b", model_type: "embedding" },
+    { id: "embed-helper", model_type: "embedding", is_helper: true },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function mockCatalog(models: unknown[]): void {
+    mocks.fetchWithSsrFGuard.mockResolvedValue({
+      response: statusResponse(models),
+      release: vi.fn(async () => undefined),
+    });
+  }
+
+  it("selects the first advertised embedding model when nothing is configured", async () => {
+    mockCatalog(EMBEDDING_CATALOG);
+
+    expect(await resolveOmlxEmbeddingModel({ baseUrl: "http://localhost:8000" })).toEqual({
+      status: "resolved",
+      modelId: "embed-a",
+      loaded: true,
+    });
+  });
+
+  it("prefers the bundled default when the server advertises it", async () => {
+    mockCatalog(EMBEDDING_CATALOG);
+
+    expect(
+      await resolveOmlxEmbeddingModel({ baseUrl: "http://localhost:8000", preferred: "embed-b" }),
+    ).toEqual({ status: "resolved", modelId: "embed-b", loaded: false });
+  });
+
+  it("ignores a preferred model the server does not advertise", async () => {
+    mockCatalog(EMBEDDING_CATALOG);
+
+    expect(
+      await resolveOmlxEmbeddingModel({ baseUrl: "http://localhost:8000", preferred: "absent" }),
+    ).toMatchObject({ status: "resolved", modelId: "embed-a" });
+  });
+
+  it("honors a requested model even when oMLX types it as chat", async () => {
+    mockCatalog(EMBEDDING_CATALOG);
+
+    expect(
+      await resolveOmlxEmbeddingModel({
+        baseUrl: "http://localhost:8000",
+        requested: "chat-model",
+      }),
+    ).toMatchObject({ status: "resolved", modelId: "chat-model" });
+  });
+
+  it("reports absent with the advertised alternatives for an unknown request", async () => {
+    mockCatalog(EMBEDDING_CATALOG);
+
+    expect(
+      await resolveOmlxEmbeddingModel({ baseUrl: "http://localhost:8000", requested: "nope" }),
+    ).toEqual({ status: "absent", available: ["embed-a", "embed-b"] });
+  });
+
+  it("reports absent when the server serves no embedding model", async () => {
+    mockCatalog([{ id: "chat-model", model_type: "llm" }]);
+
+    expect(await resolveOmlxEmbeddingModel({ baseUrl: "http://localhost:8000" })).toEqual({
+      status: "absent",
+      available: [],
+    });
+  });
+
+  // An unreachable server must never look like a server that dropped the model:
+  // one is transient, the other is a config error the operator must fix.
+  it("reports unavailable rather than absent when the server is unreachable", async () => {
+    mocks.fetchWithSsrFGuard.mockRejectedValue(new Error("ECONNREFUSED"));
+
+    expect(
+      await resolveOmlxEmbeddingModel({ baseUrl: "http://localhost:8000", requested: "embed-a" }),
+    ).toEqual({ status: "unavailable" });
+  });
+
+  it("reports unavailable on an HTTP error status", async () => {
+    mocks.fetchWithSsrFGuard.mockResolvedValue({
+      response: jsonResponse({ message: "unauthorized" }, 401),
+      release: vi.fn(async () => undefined),
+    });
+
+    expect(await resolveOmlxEmbeddingModel({ baseUrl: "http://localhost:8000" })).toEqual({
+      status: "unavailable",
+    });
   });
 });
